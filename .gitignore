@@ -1,0 +1,4 @@
+.terraform*
+terraform.tfstate*
+pull-secret.txt
+credentials.tf

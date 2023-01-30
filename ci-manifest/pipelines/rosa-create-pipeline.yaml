@@ -1,0 +1,314 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: rosa-create-pipeline 
+spec:
+  workspaces:
+  - name: aws-credentials-secret
+  - name: rosa-config-workspace
+  - name: shared-workspace
+  - name: kubeconfig-workspace
+  - name: manifest-workspace
+
+  params:  
+  - name: rosa-token
+    type: string
+  - name: rosa-cluster-name
+    type: string
+  - name: rosa-region
+    type: string
+  - name: rosa-cidr
+    type: string
+  - name: ARGS
+    type: string
+  - name: git-url
+    type: string
+  - name: git-revision
+    type: string
+  - name: default-route-host
+    type: string
+  - name: app-namespace
+    type: string
+  - name: application-name
+    type: string
+  - name: revision
+    type: string
+  - name: app-host
+    type: string
+  - name: zone-id
+    type: string
+  - name: db-vpc-id
+    type: string
+  - name: db-vpc-cidr
+    type: string
+  - name: db-region
+    type: string
+
+  tasks:
+  - name: git-clone
+    taskRef:
+      name: git-clone
+    params:
+    - name: url
+      value: $(params.git-url)
+    - name: revision
+      value: $(params.git-revision)
+    workspaces:
+    - name: output 
+      workspace: manifest-workspace
+
+  - name: rosa-init
+    taskRef:
+      name: aws-rosa-cli
+    params:
+    - name: SCRIPT
+      value: |
+        printenv
+        echo $(params.rosa-token)
+        echo $AWS_ACCESS_KEY_ID
+        rosa login --token $(params.rosa-token)
+        rosa init --region $(params.rosa-region)
+        rosa create account-roles --prefix ManagedOpenShift --mode auto --yes
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+
+  - name: create-cluster
+    taskRef:
+      name: aws-rosa-cli
+    params: 
+    - name: SCRIPT 
+      value: |
+        #/bin/bash
+        if [[ ! $(rosa list cluster | grep $(params.rosa-cluster-name) ) ]] ; then
+          rosa create cluster --cluster-name=$(params.rosa-cluster-name) --region=$(params.rosa-region) --machine-cidr=$(params.rosa-cidr) $(params.ARGS)
+        else
+          echo "ROSA Cluster \"$(params.rosa-cluster-name)\" already exists."
+        fi 
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+    runAfter:
+    - rosa-init
+
+  - name: check-cluster
+    taskRef:
+      name: aws-rosa-cli
+    timeout: "1h30m"
+    params: 
+    - name: SCRIPT
+      value: |
+        #/bin/bash
+        while [[ ! $(rosa list cluster | grep $(params.rosa-cluster-name) | grep "ready") ]] ;
+        do
+          echo "ROSA Cluster \"$(params.rosa-cluster-name)\" is not ready."
+          echo "wait 10 seconds and retry..."
+          sleep 10
+        done
+        echo "ROSA Cluster \"$(params.rosa-cluster-name)\" is ready."
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+    runAfter:
+    - create-cluster
+
+  - name: prepare-vpc-peering
+    taskRef:
+      name: aws-rosa-cli
+    params:
+    - name: SCRIPT
+      value: |
+       export REMOTE_STATE_DIR="/workspace/remote-state"
+       export DB_VPC_ID=$(params.db-vpc-id)
+       export DB_VPC_CIDR=$(params.db-vpc-cidr)
+       export DB_REGION=$(params.db-region)
+       export ROSA_REGION=$(params.rosa-region)
+       export ROSA_VPC_ID=$(aws ec2 describe-vpcs --region $(params.rosa-region) --query 'Vpcs[0].VpcId' --filter "Name=cidr-block-association.cidr-block,Values=$(params.rosa-cidr)" --output text)
+       export ROSA_VPC_CIDR=$(params.rosa-cidr)
+       envsubst < $(workspaces.manifest.path)/cluster-manifest/terraform/vpc-peering.tpl > $(workspaces.manifest.path)/cluster-manifest/terraform/vpc-peering.tf
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+    - name: manifest
+      workspace: manifest-workspace
+    runAfter:
+    - check-cluster
+
+  - name: create-vpc-peering
+    taskRef:
+      name: terraform-cli
+    workspaces:
+    - name: source
+      workspace: manifest-workspace
+    - name: remote-state
+      workspace: shared-workspace
+    params:
+     - name: terraform-secret
+       value: "terraform-secret"
+     - name: source-dir
+       value: $(workspaces.source.path)/cluster-manifest
+     - name: ARGS
+       value:
+       - apply
+       - "-auto-approve"
+    runAfter:
+    - prepare-vpc-peering
+ 
+  - name: create-cluster-admin
+    taskRef:
+      name: aws-rosa-cli 
+    params: 
+    - name: SCRIPT
+      value: |
+        #/bin/bash
+        set +e
+        rosa create admin --cluster=$(params.rosa-cluster-name) > $(workspaces.shared.path)/stdout.txt
+        if [[ $(cat $(workspaces.shared.path)/stdout.txt | grep "oc login") ]] ; then
+          cat $(workspaces.shared.path)/stdout.txt | grep "oc login" > $(workspaces.shared.path)/command.txt
+        fi
+        cat $(workspaces.shared.path)/command.txt
+        while true ;
+        do
+          $(cat $(workspaces.shared.path)/command.txt) --insecure-skip-tls-verify
+          ret=$?
+          if [ $ret -eq 0 ] ; then
+            break
+          else
+            echo "\"$(params.rosa-cluster-name)\" Cluster-admin user is not ready."
+            echo "wait 10 seconds and retry..."
+            sleep 10
+          fi
+        done 
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+    - name: shared
+      workspace: shared-workspace
+    - name: kubeconfig
+      workspace: kubeconfig-workspace
+    runAfter:
+    - check-cluster
+
+  - name: decrypt-secret
+    taskRef:
+      name: aws-rosa-cli 
+    params:
+    - name: SCRIPT
+      value: |
+        aws kms decrypt --ciphertext-blob fileb://$(workspaces.manifest.path)/cluster-manifest/k8s/app/secrets/encrypted-pull-secret.txt --output text --region ap-northeast-1 --query Plaintext | base64 --decode > $(workspaces.manifest.path)/cluster-manifest/k8s/app/secrets/pull-secret.txt 
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+    - name: manifest
+      workspace: manifest-workspace
+    runAfter:
+    - git-clone
+
+  - name: install-argocd
+    taskRef:
+      name: openshift-client
+    workspaces:
+      - name: manifest-dir
+        workspace: manifest-workspace
+      - name: kubeconfig-dir
+        workspace: kubeconfig-workspace
+    params:
+    - name: SCRIPT
+      value: |
+        oc apply -f cluster-manifest/k8s/operator
+        while ! oc get csv -n openshift-operators -l operators.coreos.com/openshift-gitops-operator.openshift-operators | grep Succeeded; do sleep 10; done 
+        oc apply -f cluster-manifest/k8s/openshift-gitops
+    runAfter:
+    - decrypt-secret
+    - create-cluster-admin
+
+  - name: argocd-access-configuration
+    taskRef:
+      name: openshift-client
+    workspaces:
+    - name: manifest-dir
+      workspace: manifest-workspace
+    - name: kubeconfig-dir
+      workspace: kubeconfig-workspace
+    - name: shared
+      workspace: shared-workspace
+    params:
+    - name: SCRIPT
+      value: |
+        oc get route openshift-gitops-server -n openshift-gitops --template="{{.spec.host}}" > $(workspaces.shared.path)/argocd-server.txt
+        oc -n openshift-gitops get secret openshift-gitops-cluster -o jsonpath="{.data['admin\.password']}" | base64 --decode > $(workspaces.shared.path)/argocd-password.txt
+    runAfter:
+    - install-argocd
+
+  - name: prepare-deploy
+    taskRef:
+      name: openshift-client
+    workspaces:
+    - name: manifest-dir
+      workspace: manifest-workspace
+    - name: kubeconfig-dir
+      workspace: kubeconfig-workspace
+    params:
+    - name: SCRIPT
+      value: |
+        oc apply -f cluster-manifest/k8s/app/project.yaml
+        oc create secret docker-registry pull-secret --docker-server=$(params.default-route-host) --docker-username=serviceaccount --docker-password=$(cat $(workspaces.manifest-dir.path)/cluster-manifest/k8s/app/secrets/pull-secret.txt) --docker-email=unused -n $(params.app-namespace)
+        oc patch sa/builder --patch '{"imagePullSecrets":[{"name":"pull-secret"}]}' --type merge -n $(params.app-namespace) 
+        oc import-image -n $(params.app-namespace) $(params.default-route-host)/$(params.app-namespace)/nginx --confirm
+        oc import-image -n $(params.app-namespace) $(params.default-route-host)/$(params.app-namespace)/django --confirm
+    runAfter:
+    - decrypt-secret
+    - create-cluster-admin
+
+  - name: sync-application
+    taskRef:
+      name: argocd-task-sync-and-wait
+    workspaces:
+    - name: shared
+      workspace: shared-workspace
+    params:
+    - name: SCRIPT
+      value: |
+        echo "argo login"
+         while ! yes | argocd login --insecure $(cat $(workspaces.shared.path)/argocd-server.txt) --username="admin" --password=$(cat $(workspaces.shared.path)/argocd-password.txt) ; do sleep 10; done
+        echo "execute argo sync"
+        argocd app sync $(params.application-name) --revision $(params.revision) --insecure 
+        echo "execute argo wait"
+        argocd app wait $(params.application-name) --health --insecure
+    runAfter:
+    - argocd-access-configuration
+    - prepare-deploy
+
+  - name: change-route53-record
+    taskRef:
+      name: aws-rosa-cli
+    params:
+    - name: SCRIPT
+      value: |
+        export INGRESS_RECORD=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.domain}')
+        export APP_HOST=$(params.app-host)
+        envsubst < $(workspaces.manifest.path)/cluster-manifest/other/record_tmp.json > $(workspaces.manifest.path)/cluster-manifest/other/record.json
+        aws route53 change-resource-record-sets --hosted-zone-id $(params.zone-id) --change-batch file://$(workspaces.manifest.path)/cluster-manifest/other/record.json
+    workspaces:
+    - name: aws-creds
+      workspace: aws-credentials-secret
+    - name: rosa-config
+      workspace: rosa-config-workspace
+    - name: manifest
+      workspace: manifest-workspace
+    - name: kubeconfig
+      workspace: kubeconfig-workspace
+    runAfter:
+    - sync-application

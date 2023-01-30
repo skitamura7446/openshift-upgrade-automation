@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../../base
+ 
+namespace: sample-blog
+
+images:
+- name: image-registry.openshift-image-registry.svc:5000/sample-blog/django 
+  newName: image-registry.openshift-image-registry.svc:5000/sample-blog/django 
+  newTag: latest
+- name: image-registry.openshift-image-registry.svc:5000/sample-blog/nginx
+  newName: image-registry.openshift-image-registry.svc:5000/sample-blog/nginx 
+  newTag: latest
+
+resources:
+- django-configmap.yaml
+- nginx-route.yaml

@@ -1,0 +1,37 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: aws-rosa-cli 
+  annotations:
+    tekton.dev/displayName: "aws-rosa-cli"
+spec:
+  steps:
+  - name: aws-rosa-cli
+    image: image-registry.openshift-image-registry.svc:5000/rosa-create-ci/aws-rosa-cli:latest
+    script: |
+      $(params.SCRIPT)
+    env:
+    - name: ROSA_CLUSTER_NAME
+      value: $(params.rosa-cluster-name)
+  params:
+  - name: rosa-cluster-name
+    description: The ROSA cluster name
+    type: string
+    default: rosa-cluster-01
+  - name: SCRIPT
+    type: string
+    default: "aws --help"
+  workspaces:
+  - name: aws-creds
+    optional: true
+    mountPath: /root/.aws
+  - name: rosa-config
+    optional: true
+    mountPath: /root/.config
+  - name: shared
+    optional: true
+  - name: manifest
+    optional: true
+  - name: kubeconfig
+    mountPath: /root/.kube
+    optional: true

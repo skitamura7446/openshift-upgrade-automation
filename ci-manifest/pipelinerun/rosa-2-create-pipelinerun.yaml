@@ -1,0 +1,64 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: rosa-create-pipelinerun
+spec:
+  pipelineRef:
+    name: rosa-create-pipeline 
+
+  params:
+  - name: rosa-token
+    value: '${ROSA_TOKEN}'
+  - name: rosa-cluster-name
+    value: 'democluster-002'
+  - name: rosa-region
+    value: 'us-east-2'
+  - name: rosa-cidr
+    value: '10.1.0.0/16'
+  - name: ARGS
+    value: '--multi-az --version "4.12.0"'
+  - name: git-url
+    value: '${GIT_URL}'
+  - name: git-revision
+    value: 'master'
+  - name: default-route-host
+    value: '${DEFAULT_ROUTE_HOST}'
+  - name: app-namespace
+    value: 'sample-blog'
+  - name: application-name
+    value: 'app-sample-blog'
+  - name: revision
+    value: 'master'
+  - name: app-host
+    value: '${APP_HOST}'
+  - name: zone-id
+    value: '${ZONE_ID}'
+  - name: db-vpc-id
+    value: '${DB_VPC_ID}'
+  - name: db-vpc-cidr
+    value: '192.168.0.0/16'
+  - name: db-region
+    value: 'us-east-1'
+
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
+
+  workspaces:
+  - name: aws-credentials-secret
+    secret:
+      secretName: aws-credentials 
+  - name: rosa-config-workspace
+    persistentVolumeClaim:
+      claimName: rosa-config-workspace
+  - name: shared-workspace
+    persistentVolumeClaim:
+      claimName: shared-workspace
+  - name: kubeconfig-workspace
+    persistentVolumeClaim:
+      claimName: kubeconfig-workspace
+  - name: manifest-workspace
+    persistentVolumeClaim:
+      claimName: manifest-workspace
+
+  serviceAccountName: tekton-sa

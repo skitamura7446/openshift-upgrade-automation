@@ -1,0 +1,18 @@
+{
+  "Comment": "UPSERT a record ",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "${APP_HOST}",
+        "Type": "CNAME",
+        "TTL": 60,
+        "ResourceRecords": [
+          {
+            "Value": "*.${INGRESS_RECORD}"
+          }
+        ]
+      }
+    }
+  ]
+}

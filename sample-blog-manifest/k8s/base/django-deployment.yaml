@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django
+  annotations:
+    app.openshift.io/connects-to: '["mysql", "redis"]'
+  labels:
+    app: sample-blog
+    app.kubernetes.io/part-of: sample-blog
+spec:
+  replicas: 1 
+  selector:
+    matchLabels:
+      app: django
+  template:
+    metadata:
+      labels:
+        app: django
+    spec:
+      initContainers:
+      - name: init-connection
+        image: registry.redhat.io/rhel8/mysql-80
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args:
+        - |
+          until mysqladmin ping -h $(MYSQL_HOST) -u $(MYSQL_USER) --password=$(MYSQL_PASSWORD) --silent; do
+              echo 'waiting for mysqld to be connectable...'
+              sleep 3
+          done
+        envFrom:
+        - configMapRef:
+            name: django-mysql-conf
+        - secretRef:
+            name: mysql-pass
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      containers:
+      - name: django
+        image: image-registry.openshift-image-registry.svc:5000/sample-blog/django:latest 
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: django-mysql-conf
+        - configMapRef:
+            name: redis-conf
+        - secretRef:
+            name: django-mysql-pass
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "300m"
+      serviceAccountName: sample-blog
