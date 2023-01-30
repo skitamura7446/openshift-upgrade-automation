@@ -186,8 +186,8 @@ oc apply -f pipelines -n rosa-create-ci
 ```
 
 ### pipelinerunの実行 @Pipeline実行用クラスター
-rosa-1-create-pipelinerun.yaml : Blue環境のROSAをデプロイするpipelinerun
-rosa-2-create-pipelinerun.yaml : Green環境のROSAをデプロイするpipelinerun
+* rosa-1-create-pipelinerun.yaml : Blue環境のROSAをデプロイするpipelinerun
+* rosa-2-create-pipelinerun.yaml : Green環境のROSAをデプロイするpipelinerun
 
 まずはBlue環境のROSAをデプロイする
 ```
