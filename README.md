@@ -8,7 +8,7 @@ Red Hat OpenShift on AWSを使ったクラスターのBlue/Green デプロイメ
 
 ## 本デモの詳細
 こちらのデモは[OpenShift.Run 2023](https://openshift.connpass.com/event/234302/)で発表したものです。
-デモの詳細な説明は[こちらのスライド]()を参照ください。
+デモの詳細な説明は[こちらのスライド](https://speakerdeck.com/skitamura7446/openshiftkurasutanoatuhukuretozi-dong-hua-henotiao-zhan-b3d6e090-7bcc-45a4-b36a-ea230c5f8bf2)を参照ください。
 
 
 ## 前提条件
